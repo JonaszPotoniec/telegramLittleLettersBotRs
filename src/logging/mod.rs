@@ -1,14 +1,12 @@
 use chrono::Local;
-use chrono::Utc;
 use cron::Schedule;
-use std::error::Error;
 use std::fmt::Display;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::time::Duration;
-use tokio::time;
-use tokio_cron_scheduler::{Job, JobScheduler, JobToRun};
+use std::sync::Arc;
+use tokio_cron_scheduler::{Job, JobScheduler};
 
 pub struct LogHandleError {
     pub code: i32,
@@ -25,10 +23,55 @@ impl<E: Display> From<E> for LogHandleError {
 }
 
 pub struct LogHandle {
-    filename: String,
-    data: AtomicU16,
+    filename: Arc<String>,
+    data: Arc<AtomicU16>,
     scheduler: JobScheduler,
     schedule: Schedule,
+}
+
+pub async fn create_and_start_counter(
+    filename: String,
+    schedule: String,
+) -> Result<LogHandle, LogHandleError> {
+    let log_handle = LogHandle::new(filename, Schedule::from_str(&schedule).unwrap()).await;
+    match log_handle {
+        Ok(handle) => {
+            let result = handle.start().await;
+            match result {
+                Ok(_) => {
+                    return Ok(handle);
+                }
+                Err(e) => {
+                    return Err(LogHandleError::from(e));
+                }
+            }
+        }
+        Err(e) => {
+            return Err(LogHandleError::from(e));
+        }
+    }
+}
+
+fn save_log(filename: String, value: &Arc<AtomicU16>) {
+    let file = OpenOptions::new().append(true).create(true).open(filename);
+
+    match file {
+        Ok(mut f) => {
+            let now = Local::now();
+            let current_value = value.swap(0, Ordering::Relaxed);
+
+            let result =
+                f.write_all(format!("{} {}\n", now.to_rfc3339(), current_value).as_bytes());
+
+            match result {
+                Ok(_) => {}
+                Err(_e) => {
+                    value.fetch_add(current_value, Ordering::Relaxed);
+                }
+            }
+        }
+        Err(_) => {}
+    }
 }
 
 impl LogHandle {
@@ -41,29 +84,20 @@ impl LogHandle {
 
         let sched = JobScheduler::new().await?;
 
-        // sched.add(Job::new(period, |_uuid, _l| {
-        //     println!("I run every 10 seconds");
-        // })?);
-
-        // sched.start().await;
-
         Ok(Self {
-            filename,
-            data: AtomicU16::new(0),
+            filename: Arc::new(filename),
+            data: Arc::new(AtomicU16::new(0)),
             scheduler: sched,
             schedule,
         })
     }
 
     pub async fn start(&self) -> Result<(), LogHandleError> {
-        // println!("Upcoming fire times:");
-        // for datetime in self.schedule.upcoming(Utc).take(10) {
-        //     println!("-> {}", datetime);
-        // }
-
+        let value = Arc::clone(&self.data);
+        let filename = Arc::clone(&self.filename);
         self.scheduler
-            .add(Job::new(self.schedule.clone(), |_uuid, _l| {
-                println!("I run every 10 seconds");
+            .add(Job::new(self.schedule.clone(), move |_uuid, _l| {
+                save_log(filename.to_string(), &value);
             })?)
             .await
             .unwrap();
@@ -77,33 +111,12 @@ impl LogHandle {
         self.scheduler.shutdown().await.ok();
     }
 
-    pub async fn log(&self) {
-        let file = OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(&self.filename);
-
-        match file {
-            Ok(mut f) => {
-                let now = Local::now();
-                let current_value = self.data.swap(0, Ordering::Relaxed);
-
-                let result =
-                    f.write_all(format!("{} {}\n", now.to_rfc3339(), current_value).as_bytes());
-
-                match result {
-                    Ok(_) => {}
-                    Err(_e) => {
-                        self.data.fetch_add(current_value, Ordering::Relaxed);
-                    }
-                }
-            }
-            Err(_) => {}
-        }
+    pub fn increment(&self) {
+        self.data.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub async fn increment(&self) {
-        self.data.fetch_add(1, Ordering::Relaxed);
+    pub fn getData(&self) -> Arc<AtomicU16> {
+        Arc::clone(&self.data)
     }
 }
 

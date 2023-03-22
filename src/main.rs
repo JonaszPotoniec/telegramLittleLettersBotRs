@@ -1,12 +1,13 @@
-use cron::Schedule;
 use figment::{
     providers::{Env, Format, Toml},
     Figment,
 };
 use serde::Deserialize;
-use std::str::FromStr;
+use std::sync::{
+    atomic::{AtomicU16, Ordering},
+    Arc,
+};
 use teloxide::prelude::*;
-use teloxide::*;
 
 mod little_letters;
 use little_letters::*;
@@ -23,8 +24,6 @@ struct Config {
 
 #[tokio::main]
 async fn main() {
-    // logging::enable_logging!();
-
     let config: Config = Figment::new()
         .merge(Toml::file("config.toml"))
         .merge(Env::prefixed("CARGO_"))
@@ -38,42 +37,56 @@ async fn main() {
     }
     println!("1");
 
-    if config.enable_logging {
-        let log_handle = LogHandle::new(
-            config.logging_filename,
-            Schedule::from_str(&config.logging_schedule.to_owned()).unwrap(),
-        )
-        .await;
-        match log_handle {
-            Ok(handle) => {
-                let result = handle.start().await;
-                match result {
-                    Ok(_) => {}
-                    Err(e) => {
-                        log::error!("Failed to start logging: {}", e.message);
-                    }
+    let counter: Option<LogHandle> = match config.enable_logging {
+        true => {
+            match create_and_start_counter(config.logging_filename, config.logging_schedule).await {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    log::error!("Failed to start logging: {}", e.message);
+                    None
                 }
             }
-            Err(e) => {
-                log::error!("Failed to start logging: {}", e.message);
-            }
         }
-    }
-    println!("2");
+        false => None,
+    };
 
     log::info!("Starting bot...");
 
     let bot = Bot::new(config.token);
 
-    teloxide::repl(bot, |bot: Bot, message: Message| async move {
-        match message.text() {
-            Some(str) => {
-                let little_letters = string_to_little_letters(str);
-                bot.send_message(message.chat.id, little_letters).await?;
-            }
-            _ => {}
+    match counter {
+        Some(c) => {
+            let value: Arc<AtomicU16> = c.getData();
+
+            teloxide::repl(bot, move |bot: Bot, message: Message| {
+                let value = Arc::clone(&value);
+
+                async move {
+                    match message.text() {
+                        Some(str) => {
+                            let little_letters = string_to_little_letters(str);
+                            bot.send_message(message.chat.id, little_letters).await?;
+                            value.fetch_add(1, Ordering::Relaxed);
+                        }
+                        _ => {}
+                    }
+                    respond(())
+                }
+            })
+            .await;
         }
-        respond(())
-    })
-    .await;
+        _ => {
+            teloxide::repl(bot, |bot: Bot, message: Message| async move {
+                match message.text() {
+                    Some(str) => {
+                        let little_letters = string_to_little_letters(str);
+                        bot.send_message(message.chat.id, little_letters).await?;
+                    }
+                    _ => {}
+                }
+                respond(())
+            })
+            .await;
+        }
+    };
 }
