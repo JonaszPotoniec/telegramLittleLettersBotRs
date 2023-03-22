@@ -1,0 +1,18 @@
+[package]
+name = "telegram_little_letters_bot"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+teloxide = { version = "0.12.2", features = ["macros", "auto-send"] }
+log = "0.4"
+pretty_env_logger = "0.4.0"
+tokio = { version = "1.26.0", features = ["rt-multi-thread", "macros"] }
+figment = { version = "0.10.8", features = ["toml", "env"] }
+serde = "1.0.158"
+rustbreak = { version = "2", features = ["yaml_enc"] }
+chrono = "0.4.24"
+tokio-cron-scheduler = "0.9.4"
+cron = "0.12.0"
