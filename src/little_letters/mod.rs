@@ -96,3 +96,20 @@ pub fn to_little_letter(c: char) -> char {
 pub fn string_to_little_letters(s: &str) -> String {
     s.chars().map(|c| to_little_letter(c)).collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::little_letters::string_to_little_letters;
+
+    #[test]
+    fn it_converts_single_letters() {
+        let result = string_to_little_letters("L");
+        assert_eq!(result, "ᴸ");
+    }
+
+    #[test]
+    fn it_converts_words() {
+        let result = string_to_little_letters("Lorem ipsum");
+        assert_eq!(result, "ᴸᵒʳᵉᵐ ᶦᵖˢᵘᵐ");
+    }
+}
