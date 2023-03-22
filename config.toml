@@ -1,0 +1,4 @@
+token = ""
+enable_logging = true
+logging_schedule = "0 0 * * * *"
+logging_filename = "statistics.log"
