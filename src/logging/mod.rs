@@ -52,25 +52,14 @@ pub async fn create_and_start_counter(
     }
 }
 
-fn save_log(filename: String, value: &Arc<AtomicU16>) {
-    let file = OpenOptions::new().append(true).create(true).open(filename);
+fn save_log(filename: &str, value: &Arc<AtomicU16>) {
+    if let Ok(mut file) = OpenOptions::new().append(true).create(true).open(filename) {
+        let now = Local::now();
+        let current_value = value.swap(0, Ordering::Relaxed);
 
-    match file {
-        Ok(mut f) => {
-            let now = Local::now();
-            let current_value = value.swap(0, Ordering::Relaxed);
-
-            let result =
-                f.write_all(format!("{} {}\n", now.to_rfc3339(), current_value).as_bytes());
-
-            match result {
-                Ok(_) => {}
-                Err(_e) => {
-                    value.fetch_add(current_value, Ordering::Relaxed);
-                }
-            }
+        if let Err(_) = writeln!(file, "{} {}", now.to_rfc3339(), current_value) {
+            value.fetch_add(current_value, Ordering::Relaxed);
         }
-        Err(_) => {}
     }
 }
 
@@ -97,7 +86,7 @@ impl LogHandle {
         let filename = Arc::clone(&self.filename);
         self.scheduler
             .add(Job::new(self.schedule.clone(), move |_uuid, _l| {
-                save_log(filename.to_string(), &value);
+                save_log(&filename, &value);
             })?)
             .await
             .unwrap();
